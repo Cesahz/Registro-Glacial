@@ -1,0 +1,362 @@
+====================================================================
+ARCHIVO: orders.csv
+DIMENSIONES: 120.000 filas × 9 columnas
+====================================================================
+
+ESTRUCTURA
+- order_id        → INT, identificador único del pedido
+- customer_id     → INT, referencia al cliente (FK candidata)
+- order_datetime  → STR, fecha y hora del pedido
+- channel         → STR, canal de venta (web/store/mobile/phone)
+- currency        → STR, moneda (PYG/USD)
+- current_status  → STR, estado actual del pedido
+- is_active       → INT, 1=activo 0=borrado
+- deleted_at      → STR, fecha de borrado lógico (nullable)
+- order_total     → FLOAT, monto total del pedido
+
+VALORES POSIBLES
+- current_status  → created, packed, paid, shipped, delivered, cancelled, refunded
+- channel         → web, store, mobile, phone
+- currency        → PYG, USD
+
+INCONSISTENCIAS DETECTADAS
+- 5.934 pedidos con order_total = 0 → imposible en negocio real
+- PYG y USD mezclados en order_total → no comparables sin conversión
+- 30.041 pedidos en estado "paid" → pendiente cruzar con payments.csv
+
+CONSTRAINTS PARA EL MODELO
+- CHECK (current_status IN ('created','packed','paid','shipped','delivered','cancelled','refunded'))
+- CHECK (channel IN ('web','store','mobile','phone'))
+- CHECK (currency IN ('PYG','USD'))
+- CHECK (order_total > 0)
+- NOT NULL en todas excepto deleted_at
+
+RELACIONES DETECTADAS
+- customer_id → referencia a tabla de clientes (aún no analizada)
+====================================================================
+ARCHIVO: products.csv
+DIMENSIONES: 8.000 filas × 10 columnas
+====================================================================
+
+ESTRUCTURA
+- product_id    → INT, identificador único del producto
+- sku           → STR, código interno único del producto
+- product_name  → STR, nombre del producto
+- category      → STR, categoría del producto
+- brand         → STR, marca del producto
+- unit_price    → FLOAT, precio de venta al cliente
+- unit_cost     → FLOAT, costo de adquisición
+- created_at    → STR, fecha de creación del registro
+- is_active     → INT, 1=activo 0=borrado
+- deleted_at    → STR, fecha de borrado lógico (nullable)
+
+VALORES POSIBLES
+- pendiente analizar category y brand
+
+INCONSISTENCIAS DETECTADAS
+- Ninguna crítica detectada
+- 48 productos con soft delete (is_active=0, deleted_at con fecha)
+
+CONSTRAINTS PARA EL MODELO
+- UNIQUE (sku)
+- CHECK (unit_price > unit_cost) → el negocio no vende a pérdida
+- CHECK (unit_price > 0)
+- CHECK (unit_cost > 0)
+- NOT NULL en todas excepto deleted_at
+
+RELACIONES DETECTADAS
+- product_id → referenciado desde order_items.csv (pendiente analizar)
+====================================================================
+ARCHIVO: payments.csv
+DIMENSIONES: 140.000 filas × 7 columnas
+====================================================================
+
+ESTRUCTURA
+- payment_id        → INT, identificador único del pago
+- order_id          → INT, referencia al pedido (FK candidata)
+- payment_datetime  → STR, fecha y hora del pago
+- method            → STR, método de pago
+- payment_status    → STR, estado del pago
+- amount            → FLOAT, monto del pago
+- currency          → STR, moneda del pago
+
+VALORES POSIBLES
+- method          → card, transfer, cash, wallet
+- payment_status  → approved, pending, rejected, refunded
+
+INCONSISTENCIAS DETECTADAS
+- 140.000 pagos para 120.000 pedidos → múltiples pagos por pedido o pagos huérfanos
+- 6.911 pagos con amount = 0
+- 5.541 pagos con amount = 0 Y status = approved → imposible en negocio real
+- Pedidos con estado "paid" en orders deben tener al menos un pago "approved" → pendiente cruzar
+
+CONSTRAINTS PARA EL MODELO
+- CHECK (method IN ('card','transfer','cash','wallet'))
+- CHECK (payment_status IN ('approved','pending','rejected','refunded'))
+- CHECK (amount > 0)
+- NOT NULL en todas las columnas
+- FK (order_id) → orders(order_id)
+
+RELACIONES DETECTADAS
+- order_id → referencia a orders.csv (relación N:1, muchos pagos por pedido)
+====================================================================
+ARCHIVO: order_items.csv
+DIMENSIONES: 360.000 filas × 7 columnas
+====================================================================
+
+ESTRUCTURA
+- order_item_id  → INT, identificador único del ítem
+- order_id       → INT, referencia al pedido (FK candidata)
+- product_id     → INT, referencia al producto (FK candidata)
+- quantity       → INT, cantidad de unidades
+- unit_price     → FLOAT, precio al momento de la compra (foto histórica)
+- discount_rate  → FLOAT, tasa de descuento aplicada (0 = sin descuento)
+- line_total     → FLOAT, total de la línea
+
+INCONSISTENCIAS DETECTADAS
+- 60 combinaciones order_id + product_id duplicadas → mismo producto
+  dos veces en el mismo pedido en lugar de aumentar quantity
+- line_total calculado como quantity × unit_price ignorando discount_rate
+  359.294 filas afectadas de 360.000 → impacto financiero directo
+
+CONSTRAINTS PARA EL MODELO
+- PRIMARY KEY (order_item_id)
+- CHECK (quantity > 0)
+- CHECK (unit_price > 0)
+- CHECK (discount_rate >= 0 AND discount_rate < 1)
+- CHECK (line_total > 0)
+- NOT NULL en todas las columnas
+- FK (order_id) → orders(order_id)
+- FK (product_id) → products(product_id)
+
+RELACIONES DETECTADAS
+- order_id  → orders.csv (N:1, muchos ítems por pedido)
+- product_id → products.csv (N:1, muchos ítems por producto)
+- Es la tabla de unión entre orders y products
+====================================================================
+ARCHIVO: order_status_history.csv
+DIMENSIONES: 250.000 filas × 6 columnas
+====================================================================
+
+ESTRUCTURA
+- status_history_id → INT, identificador único del cambio
+- order_id          → INT, referencia al pedido (FK candidata)
+- status            → STR, estado al que cambió el pedido
+- changed_at        → STR, fecha y hora del cambio
+- changed_by        → STR, quién hizo el cambio
+- reason            → STR, motivo del cambio (nullable)
+
+VALORES POSIBLES
+- status → created, packed, paid, shipped, delivered, cancelled, refunded
+
+INCONSISTENCIAS DETECTADAS
+- 225.031 nulos en reason → correcto por diseño
+- 0 cancelaciones ni reembolsos sin razón → integridad correcta
+- current_status auditado también en order_audit → redundancia entre tablas
+
+CONSTRAINTS PARA EL MODELO
+- PRIMARY KEY (status_history_id)
+- CHECK (status IN ('created','packed','paid','shipped','delivered','cancelled','refunded'))
+- NOT NULL en todas excepto reason
+- FK (order_id) → orders(order_id)
+
+RELACIONES DETECTADAS
+- order_id → orders.csv (N:1, muchos cambios por pedido)
+====================================================================
+ARCHIVO: order_audit.csv
+DIMENSIONES: 80.000 filas × 7 columnas
+====================================================================
+
+ESTRUCTURA
+- audit_id    → INT, identificador único del registro
+- order_id    → INT, referencia al pedido (FK candidata)
+- field_name  → STR, campo que fue modificado
+- old_value   → STR, valor anterior
+- new_value   → STR, valor nuevo
+- changed_at  → STR, fecha y hora del cambio
+- changed_by  → STR, quién hizo el cambio
+
+VALORES POSIBLES
+- field_name → current_status, shipping_address, order_total, notes, customer_phone
+
+INCONSISTENCIAS DETECTADAS
+- current_status aparece en order_audit Y en order_status_history
+  → redundancia entre tablas
+- 16.078 registros con field_name = 'current_status' tienen valores
+  inválidos en old_value y new_value → deberían ser los 7 estados válidos
+
+CONSTRAINTS PARA EL MODELO
+- CHECK (field_name IN ('current_status','shipping_address',
+  'order_total','notes','customer_phone'))
+- CHECK (changed_by IN ('system','support','ops'))
+
+RELACIONES DETECTADAS
+- order_id → orders.csv (N:1, muchos registros por pedido)
+====================================================================
+ARCHIVO: customers.csv
+DIMENSIONES: 30.000 filas × 9 columnas
+====================================================================
+
+ESTRUCTURA
+- customer_id → INT, identificador único del cliente
+- full_name   → STR, nombre completo
+- email       → STR, correo electrónico único
+- phone       → INT, teléfono (tipo incorrecto, debería ser STR)
+- city        → STR, ciudad del cliente
+- segment     → STR, segmento de cliente
+- created_at  → STR, fecha de registro
+- is_active   → INT, 1=activo 0=borrado
+- deleted_at  → STR, fecha de borrado lógico (nullable)
+
+VALORES POSIBLES
+- segment → retail, wholesale, online_only, vip
+
+INCONSISTENCIAS DETECTADAS
+- phone almacenado como INT → debería ser STR para soportar
+  códigos de país, guiones y formatos internacionales
+- 465 clientes con soft delete (is_active=0, deleted_at con fecha)
+
+CONSTRAINTS PARA EL MODELO
+- PRIMARY KEY (customer_id)
+- UNIQUE (email)
+- CHECK (segment IN ('retail','wholesale','online_only','vip'))
+- NOT NULL en todas excepto deleted_at
+
+RELACIONES DETECTADAS
+- customer_id → referenciado desde orders.csv (1:N, un cliente
+  puede tener muchos pedidos)
+====================================================================
+
+INCONSISTENCIA CRÍTICA - CRUCE orders ↔ payments
+11.785 pedidos con current_status = 'paid' no tienen ningún pago
+con payment_status = 'approved' en payments.csv
+→ Estado del pedido inconsistente con el registro de pagos
+
+CRUCES ENTRE TABLAS
+✓ Pagos huérfanos (payments → orders): 0
+✓ Pedidos sin cliente (orders → customers): 0
+✗ Pedidos 'paid' sin pago 'approved': 11.785 → CRÍTICO
+
+INCONSISTENCIA - CRUCE orders ↔ order_status_history
+15.065 pedidos no tienen ningún registro en order_status_history
+→ Todo pedido debería tener al menos el estado 'created' registrado
+
+
+CRUCES ENTRE TABLAS
+✓ Pagos huérfanos (payments → orders): 0
+✓ Pedidos sin cliente (orders → customers): 0
+✓ Ítems sin pedido (order_items → orders): 0
+✓ Ítems sin producto (order_items → products): 0
+✓ Historial huérfano (order_status_history → orders): 0
+✗ Pedidos 'paid' sin pago 'approved': 11.785 → CRÍTICO
+✗ Pedidos sin historial de estados: 15.065 → INCONSISTENCIA
+
+
+
+
+
+
+
+orders               tiene FK → customers
+order_items          tiene FK → orders, products
+payments             tiene FK → orders
+order_status_history tiene FK → orders
+order_audit          tiene FK → orders
+
+
+
+TABLA                PK                  FK
+─────────────────────────────────────────────────────
+customers            customer_id         —
+products             product_id          —
+orders               order_id            customer_id → customers
+order_items          order_item_id       order_id → orders
+                                         product_id → products
+payments             payment_id          order_id → orders
+order_status_history status_history_id   order_id → orders
+order_audit          audit_id            order_id → orders
+
+
+
+INSERCION orders.csv
+Insertados:  114.066
+Rechazados:    5.934
+Motivo: CHECK constraint failed: order_total > 0
+Evidencia: El modelo rechaza correctamente pedidos con monto imposible
+
+
+
+INSERCION order_items.csv
+Insertados:  360.000
+Rechazados:        0
+Motivo: Los pedidos rechazados no tenian items asociados
+Nota: Pedidos con order_total = 0 tampoco tienen items en el CSV
+
+
+
+INSERCION order_status_history.csv
+Insertados:  237.738
+Rechazados:   12.262
+Motivo: FOREIGN KEY constraint failed
+Explicacion: Registros de historial que referencian pedidos
+rechazados por order_total = 0
+Nota adicional: changed_by tenia 5 valores reales vs 3 definidos
+inicialmente. CHECK actualizado con los valores correctos del dominio.
+
+
+INSERCION order_audit.csv
+Insertados:   76.055
+Rechazados:    3.945
+Motivo: FOREIGN KEY constraint failed
+Explicacion: Registros de auditoria que referencian pedidos
+rechazados por order_total = 0
+
+
+
+
+
+TABLA                    INSERTADOS   RECHAZADOS   MOTIVO
+─────────────────────────────────────────────────────────────────
+customers                    30.000            0   —
+products                      8.000            0   —
+orders                      114.066        5.934   CHECK order_total > 0
+order_items                 360.000            0   Pedidos rechazados sin items
+payments                    133.089        6.911   CHECK amount > 0
+order_status_history        237.738       12.262   FK pedidos rechazados
+order_audit                  76.055        3.945   FK pedidos rechazados
+─────────────────────────────────────────────────────────────────
+TOTAL                       958.948       29.052
+
+
+
+
+
+CONSULTAS ESTRUCTURALES
+1. Pedidos de un cliente con ORDER BY fecha
+2. Pedidos con nombre de cliente (JOIN)
+3. Productos de un pedido (JOIN triple)
+4. Historial de estados de un pedido
+5. Pagos rechazados con cliente
+6. Productos de todos los pedidos de un cliente
+7. Pedidos entregados con pagos aprobados
+8. Clientes con pedidos cancelados
+9. Auditoria completa de un pedido
+
+VALIDACIONES DE INTEGRIDAD
+1. Pedidos paid sin pago aprobado     → 11.198
+2. Items huerfanos                    → 0
+3. Pedidos sin items                  → 0
+4. Pedidos delivered sin pago         → 14.372
+5. Pedidos sin historial              → 14.293
+6. Productos sin pedidos              → 0
+7. Clientes sin ciudad                → 0
+
+BENCHMARK DE INDICES
+Consulta: SELECT * FROM orders WHERE customer_id = ?
+Metodo: 1000 ejecuciones consecutivas
+
+Sin indice (SCAN):   5.998 segundos  → recorre 114.066 filas
+Con indice (SEARCH): 0.030 segundos  → va directo al dato
+
+Mejora: 199x mas rapido
+Costo estimado (EXPLAIN): 216 → 61
