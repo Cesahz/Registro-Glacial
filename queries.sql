@@ -68,7 +68,9 @@ FROM
     JOIN payments p ON o.order_id = p.order_id
 WHERE
     p.method = 'cash'
-    AND p.payment_status = 'pending';
+    AND p.payment_status = 'pending'
+LIMIT
+    10;
 
 -- alerta de estado imposible: pedidos marcados como pagados que carecen de un pago aprobado en el sistema
 SELECT
@@ -83,7 +85,9 @@ WHERE
     o.current_status = 'paid'
     AND p.payment_id IS NULL
 ORDER BY
-    o.order_id;
+    o.order_id
+LIMIT
+    10;
 
 -- alerta de estado imposible: pedidos que han sido entregados pero no registran ingreso de dinero aprobado
 SELECT
@@ -98,4 +102,42 @@ WHERE
     o.current_status = 'delivered'
     AND p.payment_id IS NULL
 ORDER BY
-    o.order_id;
+    o.order_id
+LIMIT
+    10;
+
+-- extrae los pedidos procesados exclusivamente en dolares (usd) preservando el valor original
+SELECT
+    o.order_id,
+    c.full_name,
+    o.order_datetime,
+    o.order_total,
+    o.currency
+FROM
+    orders o
+    JOIN customers c ON o.customer_id = c.customer_id
+WHERE
+    o.currency = 'USD'
+    AND o.current_status = 'delivered'
+ORDER BY
+    o.order_total DESC
+LIMIT
+    10;
+
+-- extrae los pedidos procesados exclusivamente en guaranies (pyg) para analisis local
+SELECT
+    o.order_id,
+    c.full_name,
+    o.order_datetime,
+    o.order_total,
+    o.currency
+FROM
+    orders o
+    JOIN customers c ON o.customer_id = c.customer_id
+WHERE
+    o.currency = 'PYG'
+    AND o.current_status = 'delivered'
+ORDER BY
+    o.order_total DESC
+LIMIT
+    10;
