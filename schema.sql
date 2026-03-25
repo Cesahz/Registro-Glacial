@@ -6,7 +6,7 @@ CREATE TABLE
     IF NOT EXISTS customers (
         customer_id INTEGER PRIMARY KEY,
         full_name TEXT NOT NULL,
-        email TEXT NOT NULL UNIQUE,
+        email TEXT NOT NULL UNIQUE CHECK (email LIKE '%@%'),
         phone TEXT NOT NULL,
         city TEXT NOT NULL,
         segment TEXT NOT NULL CHECK (
@@ -129,3 +129,16 @@ CREATE TABLE
         changed_at TEXT NOT NULL,
         changed_by TEXT NOT NULL CHECK (changed_by IN ('system', 'support', 'ops'))
     );
+
+-- indices para claves foraneas (evita escaneos completos al hacer JOINs)
+CREATE INDEX idx_orders_customer_id ON orders (customer_id);
+
+CREATE INDEX idx_order_items_order_id ON order_items (order_id);
+
+CREATE INDEX idx_order_items_product_id ON order_items (product_id);
+
+-- indice de filtrado frecuente (optimiza la clausula WHERE)
+CREATE INDEX idx_orders_current_status ON orders (current_status);
+
+-- indice de ordenamiento y rango (optimiza clausulas ORDER BY y rangos de fechas)
+CREATE INDEX idx_orders_datetime ON orders (order_datetime DESC);
