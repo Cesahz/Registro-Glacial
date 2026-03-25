@@ -23,22 +23,20 @@ No se trata solo de que funcione. Se trata de que cada decisión se pueda defend
 
 ## Estructura del proyecto
 
-```
-penguin-academy-sql/
-├── base_de_datos.db          ← base de datos SQLite con todos los datos
-├── schema.sql                ← DDL completo: CREATE TABLE con constraints
-├── queries.sql               ← consultas estructurales y validaciones
-├── analisis.ipynb            ← Etapa 1: exploración de CSV con pandas
-├── insercion.ipynb           ← Etapa 4: pipeline de inserción de datos
+Registro-Glacial/
+├── base_de_datos.db ← base de datos SQLite con todos los datos
+├── schema.sql ← DDL completo: CREATE TABLE con constraints
+├── queries.sql ← consultas estructurales y validaciones
+├── analisis.ipynb ← Etapa 1: exploración de CSV con pandas
+├── motor_insercion.py ← Etapa 4: pipeline de inserción de datos
 └── data/
-    ├── clientes.csv
-    ├── productos.csv
-    ├── pedidos.csv
-    ├── detalle_pedido.csv
-    ├── pagos.csv
-    ├── historial_estados.csv
-    └── auditoria_pedidos.csv
-```
+├── customers.csv
+├── products.csv
+├── orders.csv
+├── order_status_history.csv
+├── payments.csv
+├── order_audit.csv
+└── order_items.csv
 
 ---
 
@@ -46,26 +44,24 @@ penguin-academy-sql/
 
 El modelo tiene 7 tablas. Cada una con un rol específico e irremplazable.
 
-```
-clientes ──────────────────────────────────────── (entidad raíz)
-productos ─────────────────────────────────────── (entidad raíz)
-pedidos ──── FK → clientes ───────────────────── (entidad central)
-detalle_pedido ── FK → pedidos, productos ──────── (tabla de unión N:M)
-pagos ────── FK → pedidos ───────────────────────
-historial_estados ── FK → pedidos ───────────────
-auditoria_pedidos ── FK → pedidos ───────────────
-```
+customers ──────────────────────────────────────── (entidad raíz)
+products ─────────────────────────────────────── (entidad raíz)
+orders ──── FK → customers ───────────────────── (entidad central)
+order_items ── FK → orders, products ──────── (tabla de unión N:M)
+payments ────── FK → orders ───────────────────────
+order_status_history ── FK → orders ───────────────
+order_audit ── FK → orders ───────────────
 
-`pedidos` es el núcleo del modelo. Todas las demás tablas dependen de ella directa o indirectamente.
+`orders` es el núcleo del modelo. Todas las demás tablas dependen de ella directa o indirectamente.
 
-### ¿Por qué existen `historial_estados` Y `auditoria_pedidos`?
+### ¿Por qué existen `order_status_history` Y `order_audit`?
 
 No son redundantes. Son complementarias.
 
-- `historial_estados` responde: **¿qué estados tuvo este pedido, en qué orden y quién los cambió?**
-- `auditoria_pedidos` responde: **¿qué campo específico cambió, desde qué valor y hacia cuál?**
+- `order_status_history` responde: **¿qué estados tuvo este pedido, en qué orden y quién los cambió?**
+- `order_audit` responde: **¿qué campo específico cambió, desde qué valor y hacia cuál?**
 
-Si un cliente reclama que le cambiaron la dirección de envío sin avisarle, solo `auditoria_pedidos` puede responder eso.
+Si un cliente reclama que le cambiaron la dirección de envío sin avisarle, solo `order_audit` puede responder eso.
 
 ---
 
@@ -73,15 +69,13 @@ Si un cliente reclama que le cambiaron la dirección de envío sin avisarle, sol
 
 Nada decorativo. Todo defendible.
 
-```sql
--- Ejemplo: tabla pedidos
-estado_actual TEXT NOT NULL CHECK (
-    estado_actual IN ('entregado','cancelado','devuelto',
-                      'en_preparacion','confirmado','enviado','pendiente')
+-- Ejemplo: tabla orders
+current_status TEXT NOT NULL CHECK (
+current_status IN ('delivered', 'paid', 'shipped', 'packed',
+'cancelled', 'created', 'refunded')
 ),
-total_pedido NUMERIC NOT NULL CHECK (total_pedido > 0),
-cliente_id   INTEGER NOT NULL REFERENCES clientes(cliente_id)
-```
+order_total NUMERIC NOT NULL CHECK (order_total > 0),
+customer_id INTEGER NOT NULL REFERENCES customers(customer_id)
 
 Constraints implementados por tabla:
 
@@ -89,24 +83,24 @@ Constraints implementados por tabla:
 - `FOREIGN KEY` en todas las tablas dependientes
 - `NOT NULL` en todas las columnas donde el dominio no admite vacíos
 - `CHECK` con lista de valores válidos en columnas categóricas
-- `CHECK` con condición numérica en columnas de monto
-- `UNIQUE` en columnas que no pueden repetirse (correo, codigo_producto)
-- `CHECK` de tabla para condiciones entre dos columnas (`precio_venta > precio_costo`)
-- `CHECK` con patrón: `correo LIKE '%@%.%'` y `codigo_producto LIKE 'SKU-%'`
+- `CHECK` con condición numérica en columnas de monto (`> 0`)
+- `UNIQUE` en columnas que no pueden repetirse (`email`, `sku`)
+- `CHECK` de tabla para condiciones lógicas cruzadas (`unit_price > unit_cost`)
+- `CHECK` con patrón de negocio: `email LIKE '%@%'`
 
 ---
 
 ## Resultados de inserción
 
-| Tabla             | Insertados | Rechazados | Motivo principal                           |
-| ----------------- | ---------- | ---------- | ------------------------------------------ |
-| clientes          | 500        | 0          | —                                          |
-| productos         | 192        | 8          | `CHECK precio_venta > 0`                   |
-| pedidos           | 1.814      | 186        | `CHECK total_pedido > 0` + estado inválido |
-| detalle_pedido    | 4.262      | 738        | `FOREIGN KEY` en cascada                   |
-| pagos             | 1.975      | 525        | `CHECK monto > 0` + `FOREIGN KEY`          |
-| historial_estados | —          | —          | pendiente                                  |
-| auditoria_pedidos | —          | —          | pendiente                                  |
+| Tabla                | Insertados | Rechazados | Motivo principal                          |
+| -------------------- | ---------- | ---------- | ----------------------------------------- |
+| customers            | 500        | 0          | —                                         |
+| products             | 192        | 8          | `CHECK unit_price > 0`                    |
+| orders               | 1.814      | 186        | `CHECK order_total > 0` + estado inválido |
+| order_items          | 4.262      | 738        | `FOREIGN KEY` en cascada                  |
+| payments             | 1.975      | 525        | `CHECK amount > 0` + `FOREIGN KEY`        |
+| order_status_history | —          | —          | pendiente                                 |
+| order_audit          | —          | —          | pendiente                                 |
 
 **Si todo entra sin errores, el diseño es débil.** Los rechazos son evidencia de que los constraints funcionan.
 
@@ -116,22 +110,21 @@ Constraints implementados por tabla:
 
 Una de las piezas que más me enorgullece de este proyecto es el motor de inserción. En lugar de repetir el mismo bloque de código para cada tabla, diseñé una función universal que recibe un diccionario de configuración y procesa todas las tablas en secuencia.
 
-```python
 diccionario_datos = {
-    "clientes":           "data/clientes.csv",
-    "productos":          "data/productos.csv",
-    "pedidos":            "data/pedidos.csv",
-    "detalle_pedido":     "data/detalle_pedido.csv",
-    "pagos":              "data/pagos.csv",
-    "historial_estados":  "data/historial_estados.csv",
-    "auditoria_pedidos":  "data/auditoria_pedidos.csv",
+"customers": "data/customers.csv",
+"products": "data/products.csv",
+"orders": "data/orders.csv",
+"order_items": "data/order_items.csv",
+"payments": "data/payments.csv",
+"order_status_history": "data/order_status_history.csv",
+"order_audit": "data/order_audit.csv",
 }
 
 def insercion_datos(dic_datos: dict):
-    cursor.execute("PRAGMA foreign_keys = ON")
-    for tabla, ruta_archivo in dic_datos.items():
-        exitos, rechazos = 0, 0
-        motivos_rechazo = {}
+cursor.execute("PRAGMA foreign_keys = ON")
+for tabla, ruta_archivo in dic_datos.items():
+exitos, rechazos = 0, 0
+motivos_rechazo = {}
 
         with open(ruta_archivo, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
@@ -156,7 +149,6 @@ def insercion_datos(dic_datos: dict):
         if rechazos > 0:
             for motivo, cantidad in motivos_rechazo.items():
                 print(f"  {cantidad} filas → {motivo}")
-```
 
 Lo que hace especial a este motor:
 
@@ -168,12 +160,10 @@ Lo que hace especial a este motor:
 
 Para ejecutar el pipeline completo:
 
-```python
 try:
-    insercion_datos(diccionario_datos)
+insercion_datos(diccionario_datos)
 finally:
-    conn.close()
-```
+conn.close()
 
 ---
 
@@ -181,91 +171,81 @@ finally:
 
 ### Estructurales
 
-```sql
 -- Pedidos de un cliente con su nombre
-SELECT o.pedido_id, c.nombre_completo, o.estado_actual, o.total_pedido
-FROM pedidos o
-JOIN clientes c ON o.cliente_id = c.cliente_id
-WHERE o.cliente_id = 1
-ORDER BY o.fecha_pedido;
+SELECT o.order_id, c.full_name, o.current_status, o.order_total
+FROM orders o
+JOIN customers c ON o.customer_id = c.customer_id
+WHERE o.customer_id = 1
+ORDER BY o.order_datetime;
 
 -- Productos de un pedido específico
-SELECT o.pedido_id, p.nombre_producto, d.cantidad, d.precio_unitario
-FROM pedidos o
-JOIN detalle_pedido d ON o.pedido_id = d.pedido_id
-JOIN productos p      ON d.producto_id = p.producto_id
-WHERE o.pedido_id = 100;
+SELECT o.order_id, p.product_name, oi.quantity, oi.unit_price
+FROM orders o
+JOIN order_items oi ON o.order_id = oi.order_id
+JOIN products p ON oi.product_id = p.product_id
+WHERE o.order_id = 100;
 
 -- Clientes sin ningún pedido
-SELECT c.cliente_id, c.nombre_completo
-FROM clientes c
-LEFT JOIN pedidos o ON c.cliente_id = o.cliente_id
-WHERE o.pedido_id IS NULL;
-```
+SELECT c.customer_id, c.full_name
+FROM customers c
+LEFT JOIN orders o ON c.customer_id = o.customer_id
+WHERE o.order_id IS NULL;
 
 ### Validaciones de integridad
 
-```sql
--- Pedidos en estado 'confirmado' sin ningún pago aprobado
-SELECT o.pedido_id, o.estado_actual, o.total_pedido
-FROM pedidos o
-LEFT JOIN pagos p
-    ON o.pedido_id = p.pedido_id
-    AND p.estado_pago = 'aprobado'
-WHERE o.estado_actual = 'confirmado'
-AND p.pago_id IS NULL;
+-- Pedidos en estado 'created' sin ningún pago aprobado
+SELECT o.order_id, o.current_status, o.order_total
+FROM orders o
+LEFT JOIN payments p
+ON o.order_id = p.order_id
+AND p.payment_status = 'approved'
+WHERE o.current_status = 'created'
+AND p.payment_id IS NULL;
 
 -- Pedidos sin ningún ítem de detalle
-SELECT o.pedido_id, o.estado_actual
-FROM pedidos o
-LEFT JOIN detalle_pedido d ON o.pedido_id = d.pedido_id
-WHERE d.detalle_id IS NULL;
+SELECT o.order_id, o.current_status
+FROM orders o
+LEFT JOIN order_items oi ON o.order_id = oi.order_id
+WHERE oi.order_item_id IS NULL;
 
 -- Productos que nunca fueron vendidos
-SELECT p.producto_id, p.nombre_producto, p.categoria
-FROM productos p
-LEFT JOIN detalle_pedido d ON p.producto_id = d.producto_id
-WHERE d.detalle_id IS NULL;
-```
+SELECT p.product_id, p.product_name, p.category
+FROM products p
+LEFT JOIN order_items oi ON p.product_id = oi.product_id
+WHERE oi.product_id IS NULL;
 
 ---
 
 ## Índices y performance
 
-```sql
 -- Índices en todas las FK (el motor no los crea automáticamente)
-CREATE INDEX IF NOT EXISTS idx_pedidos_cliente_id    ON pedidos(cliente_id);
-CREATE INDEX IF NOT EXISTS idx_detalle_pedido_id     ON detalle_pedido(pedido_id);
-CREATE INDEX IF NOT EXISTS idx_detalle_producto_id   ON detalle_pedido(producto_id);
-CREATE INDEX IF NOT EXISTS idx_pagos_pedido_id       ON pagos(pedido_id);
-CREATE INDEX IF NOT EXISTS idx_historial_pedido_id   ON historial_estados(pedido_id);
-CREATE INDEX IF NOT EXISTS idx_auditoria_pedido_id   ON auditoria_pedidos(pedido_id);
+CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_product_id ON order_items(product_id);
+CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id);
 
--- Índices en columnas de filtro frecuente
-CREATE INDEX IF NOT EXISTS idx_pedidos_estado        ON pedidos(estado_actual);
-CREATE INDEX IF NOT EXISTS idx_pagos_estado          ON pagos(estado_pago);
-```
+-- Índices en columnas de filtro frecuente y ordenamiento
+CREATE INDEX IF NOT EXISTS idx_orders_current_status ON orders(current_status);
+CREATE INDEX IF NOT EXISTS idx_orders_datetime ON orders(order_datetime DESC);
 
 **Benchmark real:**
 
-```
-Sin índice (SCAN):   5.998 segundos  → recorre todas las filas
-Con índice (SEARCH): 0.030 segundos  → va directo al dato
+Sin índice (SCAN): 5.998 segundos → recorre todas las filas
+Con índice (SEARCH): 0.030 segundos → va directo al dato
 
 Mejora: 199x más rápido
-```
 
 ---
 
 ## Seguridad — SQL Injection
 
-```python
 # VULNERABLE: el atacante puede ejecutar cualquier SQL
-query = "SELECT * FROM clientes WHERE nombre = '" + input_usuario + "'"
+
+query = "SELECT \* FROM customers WHERE full_name = '" + input_usuario + "'"
 
 # SEGURO: el ? nunca se interpreta como SQL
-cursor.execute("SELECT * FROM clientes WHERE nombre = ?", (input_usuario,))
-```
+
+cursor.execute("SELECT \* FROM customers WHERE full_name = ?", (input_usuario,))
 
 Con el input `' OR '1'='1' --`:
 
@@ -278,22 +258,25 @@ Las consultas parametrizadas no mitigan SQL Injection, la eliminan estructuralme
 
 ## Cómo ejecutar
 
-```bash
 # 1. Clonar el repositorio
-git clone https://github.com/usuario/penguin-academy-sql
+
+git clone https://github.com/Cesahz/Registro-Glacial.git
 
 # 2. Instalar dependencias
+
 pip install pandas
 
 # 3. Crear las tablas
+
 # Ejecutar celda 1 del notebook (carga schema.sql)
 
 # 4. Insertar los datos
+
 # Ejecutar el pipeline universal con insercion_datos(diccionario_datos)
 
 # 5. Ejecutar las consultas
+
 # Abrir queries.sql en VSCode o ejecutar desde el notebook
-```
 
 ---
 
